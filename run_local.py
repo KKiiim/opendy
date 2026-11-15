@@ -8,6 +8,7 @@ import sys
 
 from flask import Flask
 
+from scripts.manual_wrong import install_manual_wrong
 from scripts.ordered_exams import install_ordered_exams
 
 ROOT = Path(__file__).resolve().parent
@@ -44,6 +45,7 @@ def create_app(data_dir: Path) -> Flask:
     upstream = importlib.import_module("app")
     app = upstream.app
     install_ordered_exams(upstream)
+    install_manual_wrong(upstream, ROOT / "data" / "wrong-questions.json", ROOT / "data" / "papers")
     app.config.update(
         DEBUG=False,
         SESSION_COOKIE_HTTPONLY=True,

@@ -1,5 +1,7 @@
 from contextlib import closing
+import csv
 from html.parser import HTMLParser
+import io
 import json
 from pathlib import Path
 import sqlite3
@@ -142,6 +144,57 @@ class OrderedExamTest(unittest.TestCase):
                 self.assertTrue(response.location.endswith("/modes"))
         with closing(sqlite3.connect(self.directory / "database.db")) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM exam_sessions").fetchone()[0], before)
+
+    def test_manual_wrong_marks_merge_with_history_without_writing_it(self):
+        manual_ids = set(self.app.config["MANUAL_WRONG_IDS"])
+        manual_id = next(iter(manual_ids))
+        other_id = next(row["id"] for row in self.questions if row["id"] not in manual_ids)
+        with closing(sqlite3.connect(self.directory / "database.db")) as db, db:
+            user_id = db.execute("SELECT id FROM users WHERE username=?", ("order-test",)).fetchone()[0]
+            inserted = [
+                db.execute(
+                    "INSERT INTO history (user_id, question_id, user_answer, correct) VALUES (?, ?, ?, 0)",
+                    (user_id, qid, "wrong"),
+                ).lastrowid
+                for qid in (manual_id, other_id)
+            ]
+        try:
+            with closing(sqlite3.connect(self.directory / "database.db")) as db:
+                before = db.execute("SELECT * FROM history ORDER BY id").fetchall()
+                history_ids = {
+                    row[0] for row in db.execute(
+                        "SELECT question_id FROM history WHERE user_id=? AND correct=0", (user_id,)
+                    )
+                }
+            expected = manual_ids | history_ids
+            response = self.client.get("/questions/export", query_string={"scope": "wrong"})
+            self.assertEqual(response.status_code, 200)
+            rows = csv.DictReader(io.StringIO(response.data.decode("utf-8-sig")))
+            self.assertEqual({row["题号"] for row in rows}, expected)
+            with mock.patch.dict(self.app.config, {"MANUAL_WRONG_IDS": []}):
+                original = self.client.get("/questions/export", query_string={"scope": "wrong"})
+                rows = csv.DictReader(io.StringIO(original.data.decode("utf-8-sig")))
+                self.assertEqual({row["题号"] for row in rows}, history_ids)
+            filtered = self.client.get(
+                "/questions/export", query_string={"scope": "wrong", "type": "判断题"}
+            )
+            rows = csv.DictReader(io.StringIO(filtered.data.decode("utf-8-sig")))
+            self.assertEqual(
+                {row["题号"] for row in rows},
+                {row["id"] for row in self.questions if row["id"] in expected and row["qtype"] == "判断题"},
+            )
+            page = self.client.get("/wrong").get_data(as_text=True)
+            self.assertIn(f"<span>{len(expected)}</span>", page)
+            dashboard = self.client.get("/").get_data(as_text=True)
+            self.assertRegex(dashboard, rf"(?s)待巩固错题.*?big-number\">{len(expected)}<span>题")
+            practice = self.client.get("/practice/wrong", query_string={"search": manual_id})
+            self.assertEqual(practice.status_code, 302)
+            self.assertIn(manual_id, practice.location)
+            with closing(sqlite3.connect(self.directory / "database.db")) as db:
+                self.assertEqual(db.execute("SELECT * FROM history ORDER BY id").fetchall(), before)
+        finally:
+            with closing(sqlite3.connect(self.directory / "database.db")) as db, db:
+                db.executemany("DELETE FROM history WHERE id=?", [(row_id,) for row_id in inserted])
 
 
 if __name__ == "__main__":

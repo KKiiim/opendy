@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, build_opener
 
 from scripts.build_question_bank import build_database, load_questions
+from scripts.manual_wrong import load_manual_wrong
 from run_local import ROOT, load_secret
 
 
@@ -137,6 +138,26 @@ assert app.test_client().get("/login").status_code == 200
             with self.assertRaisesRegex(ValueError, "判断题答案无效"):
                 load_questions(path.parent)
 
+    def test_manual_wrong_numbers_and_missing_questions(self):
+        first = {3, 9, 10, 16, 18, 19, 21, 23, 24, 26, 28, 31, 37, 38}
+        middle = {
+            41, 42, 45, 51, 53, 54, 55, 56, 58, 59, 60, 63, 67, 68, 69, 71, 72,
+            73, 74, 75, 76, 77, 78, 79, 81, 87, 89, 91, 94, 96, 99, 100, 104,
+            105, 110, 114, 116, 117, 119, 120, 121, 122, 124, 127, 129,
+        }
+        last = set(range(131, 166)) - {138, 139, 141, 147, 157}
+        ids, missing = load_manual_wrong(ROOT / "data" / "wrong-questions.json", ROOT / "data" / "papers")
+        self.assertEqual(len(ids), 86)
+        self.assertEqual({int(qid.rsplit("-", 1)[1]) for qid in ids}, (first | middle | last) - {75, 76, 77})
+        self.assertEqual(missing, [f"leidadu-01-12.json:{number}" for number in (75, 76, 77)])
+
+    def test_duplicate_manual_wrong_numbers_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "wrong.json"
+            path.write_text('{"leidadu-01-12.json": [1, 1]}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate question numbers"):
+                load_manual_wrong(path, ROOT / "data" / "papers")
+
     def test_script_commands(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "database.db"
@@ -162,7 +183,7 @@ assert app.test_client().get("/login").status_code == 200
             root = Path(directory)
             shutil.copy2(ROOT / "run_local.py", root / "run_local.py")
             (root / "scripts").mkdir()
-            for name in ("__init__.py", "ordered_exams.py"):
+            for name in ("__init__.py", "ordered_exams.py", "manual_wrong.py"):
                 shutil.copy2(ROOT / "scripts" / name, root / "scripts" / name)
             (root / "exam-master").symlink_to(ROOT / "exam-master", target_is_directory=True)
             with socket.socket() as sock:
