@@ -8,6 +8,8 @@ import sys
 
 from flask import Flask
 
+from scripts.ordered_exams import install_ordered_exams
+
 ROOT = Path(__file__).resolve().parent
 
 
@@ -39,7 +41,9 @@ def create_app(data_dir: Path) -> Flask:
     os.environ["EXAM_SEED_CSV"] = ""
     sys.path.insert(0, str(upstream))
     # Upstream initializes its database during import, so configure it first.
-    app = importlib.import_module("app").app
+    upstream = importlib.import_module("app")
+    app = upstream.app
+    install_ordered_exams(upstream)
     app.config.update(
         DEBUG=False,
         SESSION_COOKIE_HTTPONLY=True,
